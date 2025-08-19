@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Карта (GeoJSON → Яндекс.Карты)</title>
+  <title>Map (GeoJSON → Yandex Maps)</title>
   <style>
     html,body { height:100%; margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
     #top { display:flex; gap:.5rem; align-items:center; padding:.5rem .75rem; border-bottom:1px solid #e5e7eb; }
@@ -12,39 +12,38 @@
     #map { width:100%; height: calc(100% - 52px); }
     #status { color:#6b7280; margin-left:auto; }
   </style>
-  <!-- Координаты: долгота, широта -->
-  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
+  <!-- Yandex Maps API: use longitude,latitude order to match GeoJSON -->
+  <script src="https://api-maps.yandex.ru/2.1/?lang=en_US&coordorder=longlat" defer></script>
 </head>
 <body>
   <div id="top">
     <label for="src">GeoJSON URL:</label>
     <input id="src" type="text" placeholder="data/map.geojson" />
-    <button id="loadBtn" type="button">Загрузить</button>
+    <button id="loadBtn" type="button">Load</button>
     <input id="fileInput" type="file" accept=".geojson,.json,application/geo+json,application/json" />
-    <span id="status">Готово</span>
+    <span id="status">Ready</span>
   </div>
   <div id="map"></div>
 
   <script>
     let map, currentGeoQuery = null, currentObjectManager = null;
-
-    const BIG = 2000; // грубый порог для ObjectManager
+    const BIG = 2000; // switch to ObjectManager for very large datasets
 
     function q(name){ return new URLSearchParams(location.search).get(name); }
     function setStatus(t){ const s=document.getElementById('status'); s.textContent=t; s.title=t; }
 
     function toFC(obj){
-      if (!obj || typeof obj!=='object') throw new Error('Пустой/неверный JSON');
-      if (obj.type==='FeatureCollection') return obj;
-      if (obj.type==='Feature') return {type:'FeatureCollection',features:[obj]};
+      if (!obj || typeof obj!== 'object') throw new Error('Empty/invalid JSON');
+      if (obj.type === 'FeatureCollection') return obj;
+      if (obj.type === 'Feature') return { type:'FeatureCollection', features:[obj] };
       const geomTypes = new Set(['GeometryCollection','MultiPolygon','Polygon','MultiLineString','LineString','Point','MultiPoint']);
-      if (geomTypes.has(obj.type)) return {type:'FeatureCollection',features:[{type:'Feature',geometry:obj,properties:{}}]};
-      throw new Error('Неподдерживаемая структура GeoJSON');
+      if (geomTypes.has(obj.type)) return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
+      throw new Error('Unsupported GeoJSON structure');
     }
 
     function clearMap(){
-      if (currentGeoQuery){ try{ currentGeoQuery.removeFromMap(map); }catch{} currentGeoQuery=null; }
-      if (currentObjectManager){ try{ map.geoObjects.remove(currentObjectManager); }catch{} currentObjectManager=null; }
+      if (currentGeoQuery){ try{ currentGeoQuery.removeFromMap(map); }catch{} currentGeoQuery = null; }
+      if (currentObjectManager){ try{ map.geoObjects.remove(currentObjectManager); }catch{} currentObjectManager = null; }
     }
 
     function styleGeoQuery(gq){
@@ -56,16 +55,17 @@
         strokeOpacity: 0.9,
         openHintOnHover: true
       });
-      gq.each(obj=>{
-        const props = obj.properties.getAll()||{};
-        if (!('hintContent' in props)) obj.properties.set('hintContent', props.name||props.title||'Объект');
+      gq.each(obj => {
+        const props = obj.properties.getAll() || {};
+        if (!('hintContent' in props)) obj.properties.set('hintContent', props.name || props.title || 'Object');
         if (!('balloonContent' in props)) {
-          const name = props.name||props.title||props.id||'Объект';
-          const pretty = '<pre style="margin:0;max-height:240px;overflow:auto">'+
-            JSON.stringify(props,null,2).replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))+
+          const name = props.name || props.title || props.id || 'Object';
+          const pretty = '<pre style="margin:0;max-height:240px;overflow:auto">' +
+            JSON.stringify(props, null, 2)
+              .replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m])) +
           '</pre>';
           obj.properties.set({
-            balloonContentHeader: '<b>'+String(name).replace(/[&<>"']/g,m=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]))+'</b>',
+            balloonContentHeader: '<b>' + String(name).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m])) + '</b>',
             balloonContentBody: pretty
           });
         }
@@ -75,17 +75,14 @@
     function renderGeoJSON(data){
       clearMap();
       const fc = toFC(data);
-      const count = Array.isArray(fc.features)? fc.features.length : 0;
+      const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
       if (count > BIG){
         const om = new ymaps.ObjectManager({ clusterize:false });
         om.add(fc);
         map.geoObjects.add(om);
         currentObjectManager = om;
-        try {
-          const tmp = ymaps.geoQuery(fc), b = tmp.getBounds();
-          if (b) map.setBounds(b,{checkZoomRange:true});
-        } catch {}
+        try { const tmp = ymaps.geoQuery(fc), b = tmp.getBounds(); if (b) map.setBounds(b, { checkZoomRange:true }); } catch {}
         return;
       }
 
@@ -93,35 +90,35 @@
       styleGeoQuery(gq);
       gq.addToMap(map);
       const b = gq.getBounds();
-      if (b) map.setBounds(b,{checkZoomRange:true});
+      if (b) map.setBounds(b, { checkZoomRange:true });
       currentGeoQuery = gq;
     }
 
     async function loadFromUrl(src){
-      setStatus('Загрузка: '+src);
-      const resp = await fetch(src,{cache:'no-store'});
-      if (!resp.ok) throw new Error('HTTP '+resp.status);
+      setStatus('Loading: ' + src);
+      const resp = await fetch(src, { cache:'no-store' });
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       renderGeoJSON(data);
-      setStatus('Готово: '+src);
+      setStatus('Done: ' + src);
     }
 
     function loadFromFile(file){
-      setStatus('Чтение: '+file.name);
+      setStatus('Reading: ' + file.name);
       const r = new FileReader();
-      r.onerror = () => setStatus('Ошибка чтения файла');
+      r.onerror = () => setStatus('File read error');
       r.onload = () => {
-        try { renderGeoJSON(JSON.parse(String(r.result))); setStatus('Готово: '+file.name); }
-        catch(e){ console.error(e); setStatus('Ошибка: неверный JSON'); alert('Не удалось разобрать JSON. Проверьте формат GeoJSON.'); }
+        try { renderGeoJSON(JSON.parse(String(r.result))); setStatus('Done: ' + file.name); }
+        catch(e){ console.error(e); setStatus('Invalid JSON'); alert('Failed to parse JSON. Check GeoJSON format.'); }
       };
       r.readAsText(file);
     }
 
-    window.addEventListener('load', ()=>{
-      ymaps.ready(()=>{
+    window.addEventListener('load', () => {
+      ymaps.ready(() => {
         map = new ymaps.Map('map', {
-          center:[55.751244,37.618423],
-          zoom:9,
+          center:[55.751244, 37.618423], // Moscow
+          zoom: 9,
           controls:['zoomControl','typeSelector','fullscreenControl']
         });
 
@@ -130,15 +127,16 @@
         const fileInput = document.getElementById('fileInput');
 
         const paramSrc = q('src');
+        // Default to data/map.geojson in the same repo
         srcInput.value = paramSrc || 'data/map.geojson';
 
-        btn.onclick = ()=> {
+        btn.onclick = () => {
           const v = srcInput.value.trim();
           if (!v) return;
-          loadFromUrl(v).catch(e=>{
+          loadFromUrl(v).catch(e => {
             console.error(e);
-            setStatus('Ошибка: '+e.message+' (возможно, CORS).');
-            alert('Не удалось загрузить по URL. Если файл в этом же репозитории, используйте относительный путь (например, data/map.geojson). Для внешних URL нужен CORS.');
+            setStatus('Error: ' + e.message + ' (maybe CORS).');
+            alert('Could not load by URL. If the file is in this repo, use a relative path (e.g., data/map.geojson). External URLs require CORS.');
           });
         };
         fileInput.onchange = e => {
@@ -146,9 +144,9 @@
           if (f) loadFromFile(f);
         };
 
-        // автозагрузка по умолчанию
+        // Auto-load on start
         if (srcInput.value) {
-          loadFromUrl(srcInput.value).catch(()=> setStatus('Подсказка: положите файл в data/map.geojson или укажите ?src=URL'));
+          loadFromUrl(srcInput.value).catch(() => setStatus('Hint: put your file as data/map.geojson or provide ?src=URL'));
         }
       });
     });
