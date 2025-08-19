@@ -23,6 +23,7 @@
     tbody tr:hover { background:#f9fafb; }
     .muted { color:#6b7280; }
   </style>
+  <!-- Yandex Maps API. Use longitude, latitude coordinate order to match GeoJSON. -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
 </head>
 <body>
@@ -67,6 +68,7 @@
       if (geomTypes.has(obj.type)) return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
       throw new Error('Unsupported GeoJSON structure');
     }
+
 
     function clearMap(){
       if (currentGeoQuery){ try{ currentGeoQuery.removeFromMap(map); }catch{} currentGeoQuery = null; }
@@ -182,7 +184,7 @@
     window.addEventListener('load', () => {
       ymaps.ready(() => {
         map = new ymaps.Map('map', {
-          center:[55.751244, 37.618423],
+          center:[37.618423, 55.751244],
           zoom: 9,
           controls:['zoomControl','typeSelector','fullscreenControl']
         });
