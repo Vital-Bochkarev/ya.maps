@@ -53,6 +53,62 @@
   </div>
 
   <script>
+    // --- Debug helpers: show basic info and detect/swap coordinate order if needed ---
+    function peekFirstCoordinate(geom){
+      if (!geom) return null;
+      const t = geom.type;
+      const c = geom.coordinates;
+      if (t === 'Point') return c;
+      if (t === 'MultiPoint') return c?.[0] || null;
+      if (t === 'LineString') return c?.[0] || null;
+      if (t === 'MultiLineString') return c?.[0]?.[0] || null;
+      if (t === 'Polygon') return c?.[0]?.[0] || null;
+      if (t === 'MultiPolygon') return c?.[0]?.[0]?.[0] || null;
+      if (t === 'GeometryCollection') {
+        for (const g of (geom.geometries||[])) { const p = peekFirstCoordinate(g); if (p) return p; }
+      }
+      return null;
+    }
+
+    function looksLikeLatLong([a,b]){ // e.g. [55.7, 37.6]
+      return Math.abs(a) <= 90 && Math.abs(b) <= 180 && Math.abs(a) > Math.abs(b);
+    }
+    function looksLikeLongLat([a,b]){ // e.g. [37.6, 55.7]
+      return Math.abs(a) <= 180 && Math.abs(b) <= 90 && Math.abs(a) < Math.abs(b);
+    }
+
+    function swapCoordPair(p){ return [p[1], p[0]]; }
+    function swapCoordsInGeom(geom){
+      const t = geom.type, c = geom.coordinates;
+      if (t === 'Point') geom.coordinates = swapCoordPair(c);
+      else if (t === 'MultiPoint') geom.coordinates = c.map(swapCoordPair);
+      else if (t === 'LineString') geom.coordinates = c.map(swapCoordPair);
+      else if (t === 'MultiLineString') geom.coordinates = c.map(r => r.map(swapCoordPair));
+      else if (t === 'Polygon') geom.coordinates = c.map(r => r.map(swapCoordPair));
+      else if (t === 'MultiPolygon') geom.coordinates = c.map(p => p.map(r => r.map(swapCoordPair)));
+      else if (t === 'GeometryCollection') (geom.geometries||[]).forEach(swapCoordsInGeom);
+      return geom;
+    }
+
+    function maybeNormalizeCoordOrder(fc){
+      try {
+        const f0 = fc.features?.find(f => f?.geometry)?.geometry;
+        if (!f0) return { normalized:false };
+        const first = peekFirstCoordinate(f0);
+        if (!first || first.length < 2) return { normalized:false };
+        if (looksLikeLatLong(first)) {
+          // Dataset is [lat, lon] but API expects longlat → swap all
+          fc.features.forEach(f => f.geometry && swapCoordsInGeom(f.geometry));
+          setStatus('Обнаружен порядок [lat, lon] → автоматически исправлен на [lon, lat]');
+          return { normalized:true, from:'latlong' };
+        }
+        if (looksLikeLongLat(first)) {
+          return { normalized:false, from:'longlat' };
+        }
+        // Unknown, do nothing
+        return { normalized:false };
+      } catch(e){ console.warn('Normalize error', e); return { normalized:false, error:e.message }; }
+    }
     let map, currentGeoQuery = null, currentObjectManager = null;
     const BIG = 2000;
 
@@ -136,6 +192,13 @@
     function renderGeoJSON(data){
       clearMap();
       const fc = toFC(data);
+
+      // Try to auto-fix coordinate order if file is [lat, lon]
+      const norm = maybeNormalizeCoordOrder(fc);
+
+      const count = Array.isArray(fc.features) ? fc.features.length : 0;
+      clearMap();
+      const fc = toFC(data);
       const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
       buildList(fc);
@@ -163,7 +226,7 @@
       if (!resp.ok) throw new Error('HTTP ' + resp.status);
       const data = await resp.json();
       renderGeoJSON(data);
-      setStatus('Готово: ' + src);
+      try { setStatus('Готово: ' + src); } catch(_) {}
     }
 
     function loadFromFile(file){
