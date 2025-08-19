@@ -3,19 +3,18 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Карта из GeoJSON (точные классы)</title>
+  <title>Карта из GeoJSON — MultiPolygon</title>
   <style>
     html,body { height:100%; margin:0; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
     #wrap { display:grid; grid-template-columns:360px 1fr; height:100%; }
     #list { border-right:1px solid #e5e7eb; overflow:auto; }
-    #map { width:100%; height:100%; }
+    #map  { width:100%; height:100%; }
     .list-header { position:sticky; top:0; background:#fff; z-index:1; padding:.5rem .75rem; border-bottom:1px solid #e5e7eb; font-weight:600; }
     table { width:100%; border-collapse:collapse; }
     thead th { text-align:left; font-weight:600; color:#6b7280; padding:.5rem .75rem; position:sticky; top:36px; background:#fff; border-bottom:1px solid #e5e7eb; }
     tbody td { padding:.5rem .75rem; border-bottom:1px solid #f3f4f6; vertical-align:top; }
     tbody tr { cursor:pointer; }
     tbody tr:hover { background:#f9fafb; }
-    .muted { color:#6b7280; }
     #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.85; z-index:9999; }
   </style>
 
@@ -30,7 +29,7 @@
         <thead>
           <tr><th style="width:55%">Городской округ</th><th>Название</th></tr>
         </thead>
-        <tbody id="featList"><tr><td colspan="2" class="muted">Загрузка…</td></tr></tbody>
+        <tbody id="featList"><tr><td colspan="2">Загрузка…</td></tr></tbody>
       </table>
     </aside>
     <div id="map"></div>
@@ -38,11 +37,23 @@
   <div id="diag">init…</div>
 
 <script>
-// ---- Константы
 const SRC_GEOJSON = "https://gist.githubusercontent.com/Vital-Bochkarev/b96a1680d32b83086de812eddabb31cf/raw/69ce2f478a9f8990b482fdd6348de02387593212/map.geojson";
 
-// ---- Утилиты
-const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
+// заметные стили
+const MP_STYLE = {
+  fillColor:   '#ff0055',
+  fillOpacity: 0.75,
+  strokeColor: '#ff0055',
+  strokeOpacity: 1,
+  strokeWidth: 5,
+  zIndex: 65000,
+  zIndexHover: 65001,
+  hasHint: false,
+  hasBalloon: false,
+  interactivityModel: 'default#geoObject'
+};
+
+const esc = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
 const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
 
 function toFC(obj){
@@ -51,58 +62,39 @@ function toFC(obj){
   return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
 }
 
-// нормализуем координаты в числа (ожидается [lon,lat])
+// приводим координаты к числам [lon,lat] на всех уровнях
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
 const normPair = p => [num(p[0]), num(p[1])];
 function normalizeGeom(g){
   if (!g) return g;
-  const t = g.type, c = g.coordinates;
-  if (t === 'Point') g.coordinates = normPair(c);
-  else if (t === 'MultiPoint' || t === 'LineString') g.coordinates = (c||[]).map(normPair);
-  else if (t === 'MultiLineString' || t === 'Polygon') g.coordinates = (c||[]).map(r => (r||[]).map(normPair));
-  else if (t === 'MultiPolygon') g.coordinates = (c||[]).map(p => (p||[]).map(r => (r||[]).map(normPair)));
-  else if (t === 'GeometryCollection') (g.geometries||[]).forEach(normalizeGeom);
+  const t=g.type, c=g.coordinates;
+  if (t==='Point') g.coordinates = normPair(c);
+  else if (t==='MultiPoint' || t==='LineString') g.coordinates = (c||[]).map(normPair);
+  else if (t==='MultiLineString' || t==='Polygon') g.coordinates = (c||[]).map(r => (r||[]).map(normPair));
+  else if (t==='MultiPolygon') g.coordinates = (c||[]).map(p => (p||[]).map(r => (r||[]).map(normPair)));
+  else if (t==='GeometryCollection') (g.geometries||[]).forEach(normalizeGeom);
   return g;
 }
 
-// стили — максимально заметные
-const POLY_STYLE = {
-  fillColor:   '#ff0055',   // яркая заливка
-  fillOpacity: 0.65,
-  strokeColor: '#ff0055',
-  strokeOpacity: 1,
-  strokeWidth: 4,
-  zIndex: 65000,
-  zIndexHover: 65001,
-  hasHint: false,
-  hasBalloon: false
-};
-const LINE_STYLE = {
-  strokeColor: '#ff0055',
-  strokeOpacity: 1,
-  strokeWidth: 4,
-  zIndex: 65000,
-  hasHint: false,
-  hasBalloon: false
-};
-const POINT_STYLE = {
-  preset: 'islands#redDotIcon',
-  zIndex: 65000
-};
-
-// создаём объект ПРАВИЛЬНОГО класса под тип геометрии
-function makeObject(geometry, properties){
-  const t = geometry.type;
-  const coords = geometry.coordinates;
-
-  if (t === 'Polygon')       return new ymaps.Polygon(coords,      properties, POLY_STYLE);
-  if (t === 'MultiPolygon')  return new ymaps.MultiPolygon(coords, properties, POLY_STYLE);
-  if (t === 'LineString')    return new ymaps.Polyline(coords,     properties, LINE_STYLE);
-  if (t === 'MultiLineString') return new ymaps.GeoObject({geometry, properties}, LINE_STYLE);
-  if (t === 'MultiPoint')    return new ymaps.GeoObject({geometry, properties}, POINT_STYLE);
-  if (t === 'Point')         return new ymaps.Placemark(coords,    properties, POINT_STYLE);
-  // на всякий случай — универсальный путь
-  return new ymaps.GeoObject({ geometry, properties }, POLY_STYLE);
+// создаём ОДИН GeoObject с типом MultiPolygon — без разбиения
+function makeMultiPolygonObject(feature){
+  const g = feature.geometry;
+  // если в исходнике Polygon, оборачиваем его в MultiPolygon, чтобы всегда был мультиполигон
+  let geom;
+  if (g.type === 'MultiPolygon')      geom = { type:'MultiPolygon', coordinates: g.coordinates };
+  else if (g.type === 'Polygon')      geom = { type:'MultiPolygon', coordinates: [ g.coordinates ] };
+  else if (g.type === 'GeometryCollection'){
+    // собираем из коллекции только полигоны и мультиполигоны
+    const polys = [];
+    (g.geometries||[]).forEach(gg=>{
+      if (gg.type==='Polygon') polys.push(gg.coordinates);
+      else if (gg.type==='MultiPolygon') polys.push(...gg.coordinates);
+    });
+    geom = { type:'MultiPolygon', coordinates: polys };
+  } else {
+    return null; // не полигонная геометрия
+  }
+  return new ymaps.GeoObject({ geometry: geom, properties: feature.properties || {} }, MP_STYLE);
 }
 
 // таблица
@@ -110,7 +102,7 @@ function buildList(fc, focus){
   const tbody = document.getElementById('featList');
   tbody.innerHTML = '';
   if (!fc.features?.length){
-    tbody.innerHTML = '<tr><td colspan="2" class="muted">Нет данных</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="2">Нет данных</td></tr>';
     return;
   }
   fc.features.forEach((f, i) => {
@@ -124,7 +116,6 @@ function buildList(fc, focus){
   });
 }
 
-// рендер
 let map, objects = [];
 
 function overallBounds(){
@@ -136,23 +127,25 @@ function overallBounds(){
 }
 
 async function loadAndRender(){
-  const res = await fetch(SRC_GEOJSON, { cache: 'no-store' });
-  if (!res.ok) throw new Error('HTTP ' + res.status);
-
-  const raw = await res.json();
+  const r = await fetch(SRC_GEOJSON, { cache:'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const raw = await r.json();
   const fc  = toFC(raw);
+
+  // нормализация координат
   fc.features.forEach(f => f.geometry && normalizeGeom(f.geometry));
 
-  // убираем старые объекты
+  // удаляем старые
   objects.forEach(o => map.geoObjects.remove(o));
   objects.length = 0;
 
-  // создаём по классу и добавляем
+  // добавляем ТОЛЬКО мультиполигоны (Polygon → оборачиваем)
   fc.features.forEach(f => {
     try {
-      const o = makeObject(f.geometry, f.properties || {});
-      map.geoObjects.add(o);
-      objects.push(o);
+      const obj = makeMultiPolygonObject(f);
+      if (!obj) return; // пропускаем точки/линии
+      map.geoObjects.add(obj);
+      objects.push(obj);
     } catch(e) {
       console.warn('skip feature', f.properties, e);
     }
@@ -166,15 +159,14 @@ async function loadAndRender(){
     if (b) map.setBounds(b, { checkZoomRange:true });
   });
 
-  // стартовый fit
   const b = overallBounds();
   if (b) map.setBounds(b, { checkZoomRange:true });
 
-  diag(`OK: добавлено объектов: ${objects.length}`);
+  diag(`OK: мультиполигонов: ${objects.length}`);
 }
 
 ymaps.ready(() => {
-  // coordorder=longlat → [lon,lat]
+  // coordorder=longlat → [долгота, широта]
   map = new ymaps.Map('map', {
     center:[37.618423,55.751244],
     zoom:7,
