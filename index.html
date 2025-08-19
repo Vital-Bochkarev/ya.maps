@@ -23,7 +23,8 @@
     tbody tr:hover { background:#f9fafb; }
     .muted { color:#6b7280; }
   </style>
-  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
+  <!-- Yandex Maps API. Default coordinate order is latitude, longitude. -->
+  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU" defer></script>
 </head>
 <body>
   <div id="top">
@@ -66,6 +67,28 @@
       const geomTypes = new Set(['GeometryCollection','MultiPolygon','Polygon','MultiLineString','LineString','Point','MultiPoint']);
       if (geomTypes.has(obj.type)) return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
       throw new Error('Unsupported GeoJSON structure');
+    }
+
+    // Yandex Maps API expects coordinates in [latitude, longitude] order.
+    // Many GeoJSON files store coordinates as [longitude, latitude].
+    // This function swaps coordinate order where necessary.
+    function swapCoordOrder(geom){
+      const swap = c => { if (Array.isArray(c) && c.length > 1) { const t = c[0]; c[0] = c[1]; c[1] = t; } };
+      if (!geom || !geom.type) return;
+      switch(geom.type){
+        case 'Point':
+          swap(geom.coordinates); break;
+        case 'MultiPoint':
+        case 'LineString':
+          geom.coordinates.forEach(swap); break;
+        case 'MultiLineString':
+        case 'Polygon':
+          geom.coordinates.forEach(r => r.forEach(swap)); break;
+        case 'MultiPolygon':
+          geom.coordinates.forEach(p => p.forEach(r => r.forEach(swap))); break;
+        case 'GeometryCollection':
+          geom.geometries.forEach(g => swapCoordOrder(g)); break;
+      }
     }
 
     function clearMap(){
@@ -134,6 +157,8 @@
     function renderGeoJSON(data){
       clearMap();
       const fc = toFC(data);
+      // Normalize coordinate order for all geometries
+      fc.features.forEach(f => swapCoordOrder(f.geometry));
       const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
       buildList(fc);
