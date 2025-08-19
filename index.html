@@ -18,7 +18,7 @@
 <body>
   <div id="top">
     <label for="src">GeoJSON URL:</label>
-    <input id="src" type="text" placeholder="data/polygons.geojson" />
+    <input id="src" type="text" placeholder="data/map.geojson" />
     <button id="loadBtn" type="button">Загрузить</button>
     <input id="fileInput" type="file" accept=".geojson,.json,application/geo+json,application/json" />
     <span id="status">Готово</span>
@@ -130,7 +130,7 @@
         const fileInput = document.getElementById('fileInput');
 
         const paramSrc = q('src');
-        srcInput.value = paramSrc || 'data/polygons.geojson';
+        srcInput.value = paramSrc || 'data/map.geojson';
 
         btn.onclick = ()=> {
           const v = srcInput.value.trim();
@@ -138,7 +138,7 @@
           loadFromUrl(v).catch(e=>{
             console.error(e);
             setStatus('Ошибка: '+e.message+' (возможно, CORS).');
-            alert('Не удалось загрузить по URL. Если файл в этом же репозитории, используйте относительный путь (например, data/polygons.geojson). Для внешних URL нужен CORS.');
+            alert('Не удалось загрузить по URL. Если файл в этом же репозитории, используйте относительный путь (например, data/map.geojson). Для внешних URL нужен CORS.');
           });
         };
         fileInput.onchange = e => {
@@ -148,7 +148,7 @@
 
         // автозагрузка по умолчанию
         if (srcInput.value) {
-          loadFromUrl(srcInput.value).catch(()=> setStatus('Подсказка: положите файл в data/polygons.geojson или укажите ?src=URL'));
+          loadFromUrl(srcInput.value).catch(()=> setStatus('Подсказка: положите файл в data/map.geojson или укажите ?src=URL'));
         }
       });
     });
