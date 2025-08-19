@@ -3,303 +3,64 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Карта (GeoJSON → Яндекс.Карты)</title>
+  <title>Карта из GeoJSON</title>
   <style>
-    html,body { height:100%; margin:0; font:14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; }
-    #top { display:flex; gap:.5rem; align-items:center; padding:.5rem .75rem; border-bottom:1px solid #e5e7eb; }
-    #src { flex:1 1 320px; min-width:260px; padding:.4rem .6rem; border:1px solid #d1d5db; border-radius:8px; }
-    button,input[type="file"] { padding:.4rem .6rem; }
-    #status { color:#6b7280; margin-left:auto; }
-
-    #wrap { display:grid; grid-template-columns: 360px 1fr; height: calc(100% - 52px); }
-    #list { border-right:1px solid #e5e7eb; overflow:auto; }
-    #map { width:100%; height:100%; }
-
-    .list-header { position:sticky; top:0; background:#fff; z-index:1; padding:.5rem .75rem; border-bottom:1px solid #e5e7eb; font-weight:600; }
-    table { width:100%; border-collapse:collapse; }
-    thead th { text-align:left; font-weight:600; color:#6b7280; padding:.5rem .75rem; position:sticky; top:36px; background:#fff; border-bottom:1px solid #e5e7eb; }
-    tbody td { padding:.5rem .75rem; border-bottom:1px solid #f3f4f6; vertical-align:top; }
-    tbody tr { cursor:pointer; }
-    tbody tr:hover { background:#f9fafb; }
-    .muted { color:#6b7280; }
+    html,body{height:100%;margin:0;font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial}
+    #wrap{display:grid;grid-template-columns:360px 1fr;height:100%}
+    #list{border-right:1px solid #e5e7eb;overflow:auto}
+    #map{width:100%;height:100%}
+    .list-header{position:sticky;top:0;background:#fff;z-index:1;padding:.5rem .75rem;border-bottom:1px solid #e5e7eb;font-weight:600}
+    table{width:100%;border-collapse:collapse}
+    thead th{text-align:left;font-weight:600;color:#6b7280;padding:.5rem .75rem;position:sticky;top:36px;background:#fff;border-bottom:1px solid #e5e7eb}
+    tbody td{padding:.5rem .75rem;border-bottom:1px solid #f3f4f6;vertical-align:top}
+    tbody tr{cursor:pointer}
+    tbody tr:hover{background:#f9fafb}
+    #diag{position:fixed;right:8px;bottom:8px;background:#111;color:#fff;padding:4px 8px;border-radius:6px;font:12px/1.3 monospace;opacity:.85;z-index:9999}
   </style>
-  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
+  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat&apikey=743db4ac-b4fa-4b26-9e5d-a46953c1b951"></script>
 </head>
 <body>
-  <div id="top">
-    <label for="src">GeoJSON URL:</label>
-    <input id="src" type="text" placeholder="data/map.geojson" />
-    <button id="loadBtn" type="button">Загрузить</button>
-    <input id="fileInput" type="file" accept=".geojson,.json,application/geo+json,application/json" />
-    <span id="status">Готово</span>
-  </div>
+<div id="wrap">
+  <aside id="list">
+    <div class="list-header">Список объектов</div>
+    <table>
+      <thead><tr><th style="width:55%">Городской округ</th><th>Название</th></tr></thead>
+      <tbody id="featList"><tr><td colspan="2">Загрузка…</td></tr></tbody>
+    </table>
+  </aside>
+  <div id="map"></div>
+</div>
+<div id="diag">init…</div>
 
-  <div id="wrap">
-    <aside id="list">
-      <div class="list-header">Список объектов</div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:55%">Городской округ</th>
-            <th>Название</th>
-          </tr>
-        </thead>
-        <tbody id="featList">
-          <tr><td colspan="2" class="muted">Нет данных</td></tr>
-        </tbody>
-      </table>
-    </aside>
-    <div id="map"></div>
-  </div>
-
-  <script>
-    // --- Diagnostics: show API/data load status on the page ---
-    (function(){
-      const probe = document.createElement('div');
-      probe.id = 'diag';
-      probe.style.cssText = 'position:fixed;right:8px;bottom:8px;font:12px/1.3 monospace;background:#111;color:#fff;padding:6px 8px;border-radius:6px;opacity:.85;z-index:9999;max-width:60vw;word-break:break-all;';
-      probe.textContent = 'diag: init';
-      document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(probe));
-      function log(m){ try{ probe.textContent = 'diag: ' + m; }catch{} }
-      window.__diaglog = log;
-      // After 2s, check ymaps
-      setTimeout(()=>{
-        if (!window.ymaps) log('ymaps NOT loaded — check network/CSP');
-        else log('ymaps OK, waiting ready...');
-      }, 2000);
-    })();
-    // --- Debug helpers: show basic info and detect/swap coordinate order if needed ---
-    function peekFirstCoordinate(geom){
-      if (!geom) return null;
-      const t = geom.type;
-      const c = geom.coordinates;
-      if (t === 'Point') return c;
-      if (t === 'MultiPoint') return c?.[0] || null;
-      if (t === 'LineString') return c?.[0] || null;
-      if (t === 'MultiLineString') return c?.[0]?.[0] || null;
-      if (t === 'Polygon') return c?.[0]?.[0] || null;
-      if (t === 'MultiPolygon') return c?.[0]?.[0]?.[0] || null;
-      if (t === 'GeometryCollection') {
-        for (const g of (geom.geometries||[])) { const p = peekFirstCoordinate(g); if (p) return p; }
-      }
-      return null;
-    }
-
-    function looksLikeLatLong([a,b]){ // e.g. [55.7, 37.6]
-      return Math.abs(a) <= 90 && Math.abs(b) <= 180 && Math.abs(a) > Math.abs(b);
-    }
-    function looksLikeLongLat([a,b]){ // e.g. [37.6, 55.7]
-      return Math.abs(a) <= 180 && Math.abs(b) <= 90 && Math.abs(a) < Math.abs(b);
-    }
-
-    function swapCoordPair(p){ return [p[1], p[0]]; }
-    function swapCoordsInGeom(geom){
-      const t = geom.type, c = geom.coordinates;
-      if (t === 'Point') geom.coordinates = swapCoordPair(c);
-      else if (t === 'MultiPoint') geom.coordinates = c.map(swapCoordPair);
-      else if (t === 'LineString') geom.coordinates = c.map(swapCoordPair);
-      else if (t === 'MultiLineString') geom.coordinates = c.map(r => r.map(swapCoordPair));
-      else if (t === 'Polygon') geom.coordinates = c.map(r => r.map(swapCoordPair));
-      else if (t === 'MultiPolygon') geom.coordinates = c.map(p => p.map(r => r.map(swapCoordPair)));
-      else if (t === 'GeometryCollection') (geom.geometries||[]).forEach(swapCoordsInGeom);
-      return geom;
-    }
-
-    function maybeNormalizeCoordOrder(fc){
-      try {
-        const f0 = fc.features?.find(f => f?.geometry)?.geometry;
-        if (!f0) return { normalized:false };
-        const first = peekFirstCoordinate(f0);
-        if (!first || first.length < 2) return { normalized:false };
-        if (looksLikeLatLong(first)) {
-          // Dataset is [lat, lon] but API expects longlat → swap all
-          fc.features.forEach(f => f.geometry && swapCoordsInGeom(f.geometry));
-          setStatus('Обнаружен порядок [lat, lon] → автоматически исправлен на [lon, lat]');
-          return { normalized:true, from:'latlong' };
-        }
-        if (looksLikeLongLat(first)) {
-          return { normalized:false, from:'longlat' };
-        }
-        // Unknown, do nothing
-        return { normalized:false };
-      } catch(e){ console.warn('Normalize error', e); return { normalized:false, error:e.message }; }
-    }
-    let map, currentGeoQuery = null, currentObjectManager = null;
-    const BIG = 2000;
-
-    function q(name){ return new URLSearchParams(location.search).get(name); }
-    function setStatus(t){ const s=document.getElementById('status'); s.textContent=t; s.title=t; }
-
-    function toFC(obj){
-      if (!obj || typeof obj!== 'object') throw new Error('Empty/invalid JSON');
-      if (obj.type === 'FeatureCollection') return obj;
-      if (obj.type === 'Feature') return { type:'FeatureCollection', features:[obj] };
-      const geomTypes = new Set(['GeometryCollection','MultiPolygon','Polygon','MultiLineString','LineString','Point','MultiPoint']);
-      if (geomTypes.has(obj.type)) return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
-      throw new Error('Unsupported GeoJSON structure');
-    }
-
-    function clearMap(){
-      if (currentGeoQuery){ try{ currentGeoQuery.removeFromMap(map); }catch{} currentGeoQuery = null; }
-      if (currentObjectManager){ try{ map.geoObjects.remove(currentObjectManager); }catch{} currentObjectManager = null; }
-    }
-
-    function styleGeoQuery(gq){
-      gq.setOptions({
-        fillColor: '#FF0000',
-        fillOpacity: 0.35,
-        strokeColor: '#FF0000',
-        strokeWidth: 2,
-        strokeOpacity: 0.9,
-        openHintOnHover: true
-      });
-      gq.each(obj => {
-        const props = obj.properties.getAll() || {};
-        if (!('hintContent' in props)) obj.properties.set('hintContent', props.name || props.title || 'Объект');
-        if (!('balloonContent' in props)) {
-          const name = props.name || props.title || props.id || 'Объект';
-          const pretty = '<pre style="margin:0;max-height:240px;overflow:auto">' +
-            JSON.stringify(props, null, 2)
-              .replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m])) +
-          '</pre>';
-          obj.properties.set({
-            balloonContentHeader: '<b>' + String(name).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[m])) + '</b>',
-            balloonContentBody: pretty
-          });
-        }
-      });
-    }
-
-    function featureBounds(feature){
-      try {
-        const tmp = ymaps.geoQuery({ type:'FeatureCollection', features:[feature] });
-        return tmp.getBounds();
-      } catch(e) { return null; }
-    }
-
-    function buildList(fc){
-      const tbody = document.getElementById('featList');
-      tbody.innerHTML = '';
-
-      if (!fc.features || !fc.features.length){
-        tbody.innerHTML = '<tr><td colspan="2" class="muted">Нет данных</td></tr>';
-        return;
-      }
-
-      fc.features.forEach((f, idx) => {
-        const props = f.properties || {};
-        const city = (props.name ?? props.title ?? '').toString().trim() || '—';
-        const name = (props.description ?? '').toString().trim() || '—';
-
-        const tr = document.createElement('tr');
-        tr.dataset.index = String(idx);
-        tr.innerHTML = `<td>${escapeHtml(city)}</td><td>${escapeHtml(name)}</td>`;
-        tr.addEventListener('click', () => {
-          const b = featureBounds(f);
-          if (b) map.setBounds(b, { checkZoomRange:true });
-        });
-        tbody.appendChild(tr);
-      });
-
-      setStatus(`Загружено объектов: ${fc.features.length}`);
-    }
-
-    function renderGeoJSON(data){
-      clearMap();
-      const fc = toFC(data);
-
-      // Try to auto-fix coordinate order if file is [lat, lon]
-      const norm = maybeNormalizeCoordOrder(fc);
-
-      const count = Array.isArray(fc.features) ? fc.features.length : 0;
-      clearMap();
-      const fc = toFC(data);
-      const count = Array.isArray(fc.features) ? fc.features.length : 0;
-
-      buildList(fc);
-
-      if (count > BIG){
-        const om = new ymaps.ObjectManager({ clusterize:false });
-        om.add(fc);
-        map.geoObjects.add(om);
-        currentObjectManager = om;
-        try { const tmp = ymaps.geoQuery(fc), b = tmp.getBounds(); if (b) map.setBounds(b, { checkZoomRange:true }); } catch {}
-        return;
-      }
-
-      const gq = ymaps.geoQuery(fc);
-      styleGeoQuery(gq);
-      gq.addToMap(map);
-      const b = gq.getBounds();
-      if (b) map.setBounds(b, { checkZoomRange:true });
-      currentGeoQuery = gq;
-    }
-
-    async function loadFromUrl(src){
-      setStatus('Загрузка: ' + src);
-      const resp = await fetch(src, { cache:'no-store' });
-      if (!resp.ok) throw new Error('HTTP ' + resp.status);
-      const data = await resp.json();
-      renderGeoJSON(data);
-      try { setStatus('Готово: ' + src); } catch(_) {}
-    }
-
-    function loadFromFile(file){
-      setStatus('Чтение: ' + file.name);
-      const r = new FileReader();
-      r.onerror = () => setStatus('Ошибка чтения файла');
-      r.onload = () => {
-        try { renderGeoJSON(JSON.parse(String(r.result))); setStatus('Готово: ' + file.name); }
-        catch(e){ console.error(e); setStatus('Неверный JSON'); alert('Не удалось разобрать JSON. Проверьте формат GeoJSON.'); }
-      };
-      r.readAsText(file);
-    }
-
-    function escapeHtml(s){
-      return String(s).replace(/[&<>"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
-    }
-
-    window.addEventListener('load', () => {
-      __diaglog && __diaglog('window load');
-      ymaps.ready(() => {
-        __diaglog && __diaglog('ymaps.ready');
-        map = new ymaps.Map('map', {
-          center:[55.751244, 37.618423],
-          zoom: 9,
-          controls:['zoomControl','typeSelector','fullscreenControl']
-        });
-
-        const srcInput = document.getElementById('src');
-        const btn = document.getElementById('loadBtn');
-        const fileInput = document.getElementById('fileInput');
-
-        const paramSrc = q('src');
-        srcInput.value = paramSrc || 'data/map.geojson';
-
-        btn.onclick = () => {
-          const v = srcInput.value.trim();
-          if (!v) return;
-          loadFromUrl(v).catch(e => {
-            console.error(e);
-            setStatus('Ошибка: ' + e.message + ' (возможно CORS).');
-            alert('Не удалось загрузить по URL. Если файл в этом репо, используйте относительный путь (например, data/map.geojson). Для внешних URL нужен CORS.');
-          });
-        };
-        fileInput.onchange = e => {
-          const f = e.target.files && e.target.files[0];
-          if (f) loadFromFile(f);
-        };
-
-        if (srcInput.value) {
-          // Probe fetch first to show clearer errors
-          fetch(srcInput.value, {cache:'no-store'}).then(r=>{
-            if(!r.ok) throw new Error('HTTP '+r.status);
-            return r.json();
-          }).then(j=>{ __diaglog && __diaglog('data OK: '+(Array.isArray(j.features)?j.features.length+' features':'json')); renderGeoJSON(j); })
-          .catch(e=>{ __diaglog && __diaglog('data FAIL: '+e.message); setStatus('Подсказка: положите файл в data/map.geojson или укажите ?src=URL'); });
-        }
-      });
-    });
-  </script>
+<script>
+const SRC_GEOJSON="https://gist.githubusercontent.com/Vital-Bochkarev/b96a1680d32b83086de812eddabb31cf/raw/69ce2f478a9f8990b482fdd6348de02387593212/map.geojson";
+const esc=s=>String(s??"").replace(/[&<>\"']/g,ch=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":"&#39;"}[ch]));
+const diag=t=>{const e=document.getElementById('diag'); if(e) e.textContent=t;};
+function toFC(o){if(o?.type==="FeatureCollection")return o;if(o?.type==="Feature")return{type:"FeatureCollection",features:[o]};return{type:"FeatureCollection",features:[{type:"Feature",geometry:o,properties:{}}]}}
+function num(v){const n=Number(v);return Number.isFinite(n)?n:NaN}
+function normGeom(g){if(!g)return g;const t=g.type,c=g.coordinates;
+ if(t==='Point')g.coordinates=[num(c[0]),num(c[1])];
+ else if(t==='MultiPoint'||t==='LineString')g.coordinates=(c||[]).map(p=>[num(p[0]),num(p[1])]);
+ else if(t==='MultiLineString'||t==='Polygon')g.coordinates=(c||[]).map(r=>r.map(p=>[num(p[0]),num(p[1])])); 
+ else if(t==='MultiPolygon')g.coordinates=(c||[]).map(p=>p.map(r=>r.map(q=>[num(q[0]),num(q[1])])));
+ else if(t==='GeometryCollection')(g.geometries||[]).forEach(normGeom); return g;}
+function buildList(fc,focus){const tb=document.getElementById('featList');tb.innerHTML='';if(!fc.features?.length){tb.innerHTML='<tr><td colspan="2">Нет данных</td></tr>';return;}
+ fc.features.forEach((f,i)=>{const p=f.properties||{}, city=p.Name??p.NAME??p.name??p.title??'—', name=p.description??'—';
+   const tr=document.createElement('tr'); tr.innerHTML=`<td>${esc(city)}</td><td>${esc(name)}</td>`;
+   tr.onclick=()=>focus(i,f); tb.appendChild(tr);});}
+let map, objs=[];
+function overallBounds(){try{const col=new ymaps.GeoObjectCollection();objs.forEach(o=>col.add(o));return col.getBounds();}catch{return null}}
+async function loadAndRender(){
+  const r=await fetch(SRC_GEOJSON,{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status);
+  const raw=await r.json(); const fc=toFC(raw); fc.features.forEach(f=>f.geometry&&normGeom(f.geometry));
+  // рисуем по одному GeoObject (обход багов 2.1)
+  objs.forEach(o=>map.geoObjects.remove(o)); objs.length=0;
+  fc.features.forEach((f)=>{try{const o=new ymaps.GeoObject({geometry:f.geometry,properties:f.properties||{}},{
+     fillColor:'#FF000088',strokeColor:'#FF0000',strokeWidth:2,hasHint:false,hasBalloon:false}); map.geoObjects.add(o); objs.push(o);}catch(e){console.warn('skip feature',f.properties,e);}});
+  buildList(fc,(i)=>{const o=objs[i]; if(!o)return; const b=o.geometry.getBounds?.()||overallBounds(); if(b) map.setBounds(b,{checkZoomRange:true});});
+  const b=overallBounds(); if(b) map.setBounds(b,{checkZoomRange:true}); diag(`OK: добавлено объектов: ${objs.length}`);
+}
+ymaps.ready(()=>{map=new ymaps.Map('map',{center:[37.618423,55.751244],zoom:7,controls:['zoomControl','typeSelector','fullscreenControl']}); loadAndRender().catch(e=>{console.error(e);diag('Ошибка: '+e.message)});});
+</script>
 </body>
 </html>
