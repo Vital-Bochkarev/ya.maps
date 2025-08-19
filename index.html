@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Карта из GeoJSON (GeoObject)</title>
+  <title>Карта из GeoJSON (точные классы)</title>
   <style>
     html,body { height:100%; margin:0; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
     #wrap { display:grid; grid-template-columns:360px 1fr; height:100%; }
@@ -19,7 +19,7 @@
     #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.85; z-index:9999; }
   </style>
 
-  <!-- Подключение Яндекс.Карт (вставьте свой API-ключ) -->
+  <!-- ВСТАВЬТЕ СВОЙ КЛЮЧ -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat&apikey=743db4ac-b4fa-4b26-9e5d-a46953c1b951"></script>
 </head>
 <body>
@@ -37,124 +37,151 @@
   </div>
   <div id="diag">init…</div>
 
-  <script>
-    // ---- Настройки
-    const SRC_GEOJSON =
-      "https://gist.githubusercontent.com/Vital-Bochkarev/b96a1680d32b83086de812eddabb31cf/raw/69ce2f478a9f8990b482fdd6348de02387593212/map.geojson";
+<script>
+// ---- Константы
+const SRC_GEOJSON = "https://gist.githubusercontent.com/Vital-Bochkarev/b96a1680d32b83086de812eddabb31cf/raw/69ce2f478a9f8990b482fdd6348de02387593212/map.geojson";
 
-    // ---- Утилиты
-    const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
-    const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
+// ---- Утилиты
+const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
+const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
 
-    // GeoJSON → FeatureCollection
-    function toFC(obj){
-      if (obj?.type === 'FeatureCollection') return obj;
-      if (obj?.type === 'Feature') return { type:'FeatureCollection', features:[obj] };
-      return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
+function toFC(obj){
+  if (obj?.type === 'FeatureCollection') return obj;
+  if (obj?.type === 'Feature') return { type:'FeatureCollection', features:[obj] };
+  return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
+}
+
+// нормализуем координаты в числа (ожидается [lon,lat])
+const num = v => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
+const normPair = p => [num(p[0]), num(p[1])];
+function normalizeGeom(g){
+  if (!g) return g;
+  const t = g.type, c = g.coordinates;
+  if (t === 'Point') g.coordinates = normPair(c);
+  else if (t === 'MultiPoint' || t === 'LineString') g.coordinates = (c||[]).map(normPair);
+  else if (t === 'MultiLineString' || t === 'Polygon') g.coordinates = (c||[]).map(r => (r||[]).map(normPair));
+  else if (t === 'MultiPolygon') g.coordinates = (c||[]).map(p => (p||[]).map(r => (r||[]).map(normPair)));
+  else if (t === 'GeometryCollection') (g.geometries||[]).forEach(normalizeGeom);
+  return g;
+}
+
+// стили — максимально заметные
+const POLY_STYLE = {
+  fillColor:   '#ff0055',   // яркая заливка
+  fillOpacity: 0.65,
+  strokeColor: '#ff0055',
+  strokeOpacity: 1,
+  strokeWidth: 4,
+  zIndex: 65000,
+  zIndexHover: 65001,
+  hasHint: false,
+  hasBalloon: false
+};
+const LINE_STYLE = {
+  strokeColor: '#ff0055',
+  strokeOpacity: 1,
+  strokeWidth: 4,
+  zIndex: 65000,
+  hasHint: false,
+  hasBalloon: false
+};
+const POINT_STYLE = {
+  preset: 'islands#redDotIcon',
+  zIndex: 65000
+};
+
+// создаём объект ПРАВИЛЬНОГО класса под тип геометрии
+function makeObject(geometry, properties){
+  const t = geometry.type;
+  const coords = geometry.coordinates;
+
+  if (t === 'Polygon')       return new ymaps.Polygon(coords,      properties, POLY_STYLE);
+  if (t === 'MultiPolygon')  return new ymaps.MultiPolygon(coords, properties, POLY_STYLE);
+  if (t === 'LineString')    return new ymaps.Polyline(coords,     properties, LINE_STYLE);
+  if (t === 'MultiLineString') return new ymaps.GeoObject({geometry, properties}, LINE_STYLE);
+  if (t === 'MultiPoint')    return new ymaps.GeoObject({geometry, properties}, POINT_STYLE);
+  if (t === 'Point')         return new ymaps.Placemark(coords,    properties, POINT_STYLE);
+  // на всякий случай — универсальный путь
+  return new ymaps.GeoObject({ geometry, properties }, POLY_STYLE);
+}
+
+// таблица
+function buildList(fc, focus){
+  const tbody = document.getElementById('featList');
+  tbody.innerHTML = '';
+  if (!fc.features?.length){
+    tbody.innerHTML = '<tr><td colspan="2" class="muted">Нет данных</td></tr>';
+    return;
+  }
+  fc.features.forEach((f, i) => {
+    const p = f.properties || {};
+    const okrug = (p.Name ?? p.NAME ?? p.name ?? p.title ?? '—');
+    const name  = (p.description ?? '—');
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(okrug)}</td><td>${esc(name)}</td>`;
+    tr.onclick = () => focus(i);
+    tbody.appendChild(tr);
+  });
+}
+
+// рендер
+let map, objects = [];
+
+function overallBounds(){
+  try {
+    const col = new ymaps.GeoObjectCollection();
+    objects.forEach(o => col.add(o));
+    return col.getBounds();
+  } catch { return null; }
+}
+
+async function loadAndRender(){
+  const res = await fetch(SRC_GEOJSON, { cache: 'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+
+  const raw = await res.json();
+  const fc  = toFC(raw);
+  fc.features.forEach(f => f.geometry && normalizeGeom(f.geometry));
+
+  // убираем старые объекты
+  objects.forEach(o => map.geoObjects.remove(o));
+  objects.length = 0;
+
+  // создаём по классу и добавляем
+  fc.features.forEach(f => {
+    try {
+      const o = makeObject(f.geometry, f.properties || {});
+      map.geoObjects.add(o);
+      objects.push(o);
+    } catch(e) {
+      console.warn('skip feature', f.properties, e);
     }
+  });
 
-    // Приводим координаты к числам в порядке [lon, lat]
-    const num = v => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
-    const normPair = p => [num(p[0]), num(p[1])];
-    function normalizeGeom(g){
-      if (!g) return g;
-      const t = g.type, c = g.coordinates;
-      if (t === 'Point') g.coordinates = normPair(c);
-      else if (t === 'MultiPoint' || t === 'LineString') g.coordinates = (c||[]).map(normPair);
-      else if (t === 'MultiLineString' || t === 'Polygon') g.coordinates = (c||[]).map(r => (r||[]).map(normPair));
-      else if (t === 'MultiPolygon') g.coordinates = (c||[]).map(p => (p||[]).map(r => (r||[]).map(normPair)));
-      else if (t === 'GeometryCollection') (g.geometries||[]).forEach(normalizeGeom);
-      return g;
-    }
+  // список и зум по клику
+  buildList(fc, (idx) => {
+    const o = objects[idx];
+    if (!o) return;
+    const b = o.geometry.getBounds?.() || overallBounds();
+    if (b) map.setBounds(b, { checkZoomRange:true });
+  });
 
-    // Таблица
-    function buildList(fc, focus){
-      const tbody = document.getElementById('featList');
-      tbody.innerHTML = '';
-      if (!fc.features?.length){
-        tbody.innerHTML = '<tr><td colspan="2" class="muted">Нет данных</td></tr>';
-        return;
-      }
-      fc.features.forEach((f, i) => {
-        const p = f.properties || {};
-        const okrug = (p.Name ?? p.NAME ?? p.name ?? p.title ?? '—');
-        const name  = (p.description ?? '—');
-        const tr = document.createElement('tr');
-        tr.innerHTML = `<td>${esc(okrug)}</td><td>${esc(name)}</td>`;
-        tr.onclick = () => focus(i);
-        tbody.appendChild(tr);
-      });
-    }
+  // стартовый fit
+  const b = overallBounds();
+  if (b) map.setBounds(b, { checkZoomRange:true });
 
-    // ---- Рендер
-    let map;
-    const objects = []; // ymaps.GeoObject[]
+  diag(`OK: добавлено объектов: ${objects.length}`);
+}
 
-    function overallBounds(){
-      try {
-        const col = new ymaps.GeoObjectCollection();
-        objects.forEach(o => col.add(o));
-        return col.getBounds();
-      } catch { return null; }
-    }
-
-    async function loadAndRender(){
-      const r = await fetch(SRC_GEOJSON, { cache:'no-store' });
-      if (!r.ok) throw new Error('HTTP ' + r.status);
-      const raw = await r.json();
-      const fc  = toFC(raw);
-      fc.features.forEach(f => f.geometry && normalizeGeom(f.geometry));
-
-      // Удаляем предыдущие, добавляем новые GeoObject с жирными стилями
-      objects.forEach(o => map.geoObjects.remove(o));
-      objects.length = 0;
-
-      fc.features.forEach(f => {
-        try {
-          const obj = new ymaps.GeoObject(
-            { geometry: f.geometry, properties: f.properties || {} },
-            {
-              fillColor:   '#ff0055',
-              fillOpacity: 0.6,
-              strokeColor: '#ff0055',
-              strokeOpacity: 1,
-              strokeWidth: 3,
-              zIndex: 65000,
-              zIndexHover: 65001,
-              hasHint: false,
-              hasBalloon: false,
-              interactivityModel: 'default#geoObject'
-            }
-          );
-          map.geoObjects.add(obj);
-          objects.push(obj);
-        } catch (e) {
-          console.warn('skip feature', f.properties, e);
-        }
-      });
-
-      // Таблица и управление зумом
-      buildList(fc, (idx) => {
-        const o = objects[idx];
-        if (!o) return;
-        const b = o.geometry.getBounds?.() || overallBounds();
-        if (b) map.setBounds(b, { checkZoomRange:true });
-      });
-
-      const b = overallBounds();
-      if (b) map.setBounds(b, { checkZoomRange:true });
-      diag(`OK: добавлено объектов: ${objects.length}`);
-    }
-
-    ymaps.ready(() => {
-      // coordorder=longlat → [lon, lat]
-      map = new ymaps.Map('map', {
-        center:[37.618423,55.751244],
-        zoom:7,
-        controls:['zoomControl','typeSelector','fullscreenControl']
-      });
-      loadAndRender().catch(e => { console.error(e); diag('Ошибка: ' + e.message); });
-    });
-  </script>
+ymaps.ready(() => {
+  // coordorder=longlat → [lon,lat]
+  map = new ymaps.Map('map', {
+    center:[37.618423,55.751244],
+    zoom:7,
+    controls:['zoomControl','typeSelector','fullscreenControl']
+  });
+  loadAndRender().catch(e => { console.error(e); diag('Ошибка: ' + e.message); });
+});
+</script>
 </body>
 </html>
