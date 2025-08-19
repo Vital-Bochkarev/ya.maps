@@ -11,7 +11,6 @@
     button,input[type="file"] { padding:.4rem .6rem; }
     #status { color:#6b7280; margin-left:auto; }
 
-    /* Макет: список слева, карта справа */
     #wrap { display:grid; grid-template-columns: 360px 1fr; height: calc(100% - 52px); }
     #list { border-right:1px solid #e5e7eb; overflow:auto; }
     #map { width:100%; height:100%; }
@@ -24,7 +23,6 @@
     tbody tr:hover { background:#f9fafb; }
     .muted { color:#6b7280; }
   </style>
-  <!-- Яндекс.Карты API: язык русский, координаты в порядке долгота, широта -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
 </head>
 <body>
@@ -42,8 +40,8 @@
       <table>
         <thead>
           <tr>
-            <th style="width:55%">Название</th>
-            <th>Городской округ</th>
+            <th style="width:55%">Городской округ</th>
+            <th>Название</th>
           </tr>
         </thead>
         <tbody id="featList">
@@ -119,12 +117,12 @@
 
       fc.features.forEach((f, idx) => {
         const props = f.properties || {};
-        const name = (props.name ?? props.title ?? '').toString().trim() || '—';
-        const descr = (props.description ?? '').toString().trim() || '—';
+        const city = (props.name ?? props.title ?? '').toString().trim() || '—';
+        const name = (props.description ?? '').toString().trim() || '—';
 
         const tr = document.createElement('tr');
         tr.dataset.index = String(idx);
-        tr.innerHTML = `<td>${escapeHtml(name)}</td><td>${escapeHtml(descr)}</td>`;
+        tr.innerHTML = `<td>${escapeHtml(city)}</td><td>${escapeHtml(name)}</td>`;
         tr.addEventListener('click', () => {
           const b = featureBounds(f);
           if (b) map.setBounds(b, { checkZoomRange:true });
@@ -138,7 +136,6 @@
       const fc = toFC(data);
       const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
-      // Построим список в любом случае
       buildList(fc);
 
       if (count > BIG){
@@ -185,7 +182,7 @@
     window.addEventListener('load', () => {
       ymaps.ready(() => {
         map = new ymaps.Map('map', {
-          center:[55.751244, 37.618423], // Москва
+          center:[55.751244, 37.618423],
           zoom: 9,
           controls:['zoomControl','typeSelector','fullscreenControl']
         });
