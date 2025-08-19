@@ -69,7 +69,6 @@
       throw new Error('Unsupported GeoJSON structure');
     }
 
-
     function clearMap(){
       if (currentGeoQuery){ try{ currentGeoQuery.removeFromMap(map); }catch{} currentGeoQuery = null; }
       if (currentObjectManager){ try{ map.geoObjects.remove(currentObjectManager); }catch{} currentObjectManager = null; }
@@ -136,6 +135,8 @@
     function renderGeoJSON(data){
       clearMap();
       const fc = toFC(data);
+      // Normalize coordinate order for all geometries
+      fc.features.forEach(f => swapCoordOrder(f.geometry));
       const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
       buildList(fc);
