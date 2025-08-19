@@ -23,7 +23,6 @@
     tbody tr:hover { background:#f9fafb; }
     .muted { color:#6b7280; }
   </style>
-  <!-- Yandex Maps API. Use longitude, latitude coordinate order to match GeoJSON. -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat" defer></script>
 </head>
 <body>
@@ -130,13 +129,13 @@
         });
         tbody.appendChild(tr);
       });
+
+      setStatus(`Загружено объектов: ${fc.features.length}`);
     }
 
     function renderGeoJSON(data){
       clearMap();
       const fc = toFC(data);
-      // Normalize coordinate order for all geometries
-      fc.features.forEach(f => swapCoordOrder(f.geometry));
       const count = Array.isArray(fc.features) ? fc.features.length : 0;
 
       buildList(fc);
@@ -185,7 +184,7 @@
     window.addEventListener('load', () => {
       ymaps.ready(() => {
         map = new ymaps.Map('map', {
-          center:[37.618423, 55.751244],
+          center:[55.751244, 37.618423],
           zoom: 9,
           controls:['zoomControl','typeSelector','fullscreenControl']
         });
