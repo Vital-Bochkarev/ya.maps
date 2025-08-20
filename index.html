@@ -17,7 +17,7 @@
     tbody tr:hover { background:#f9fafb; }
     #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.9; z-index:9999; }
   </style>
-  <!-- ВСТАВЬТЕ свой ключ после apikey= (можно удалить apikey=..., тогда будет без ключа) -->
+  <!-- ВСТАВЬТЕ свой ключ; координатный порядок long,lat -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat&apikey=ВАШ_API_КЛЮЧ"></script>
 </head>
 <body>
@@ -42,7 +42,7 @@ const SRC_GEOJSON =
 const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
 const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
 
-let map, om, features = []; // om = ObjectManager
+let map, om;
 
 function buildList(fc){
   const tbody = document.getElementById('featList');
@@ -53,15 +53,22 @@ function buildList(fc){
     const name  = p.description ?? '—';
     const tr = document.createElement('tr');
     tr.innerHTML = `<td>${esc(okrug)}</td><td>${esc(name)}</td>`;
-    tr.onclick = () => {
-      const obj = om.objects.getById(i);
-      if (!obj) return;
-      const q = ymaps.geoQuery({ type:'FeatureCollection', features:[obj] });
-      const b = q.getBounds();
-      if (b) map.setBounds(b, { checkZoomRange:true, zoomMargin:20 });
-    };
+    tr.onclick = () => zoomToObject(i);
     tbody.appendChild(tr);
   });
+}
+
+function zoomToObject(id){
+  try {
+    const obj = om.objects.getById(id);
+    if (!obj || !obj.geometry) return;
+    // считаем bounds выбранного объекта безопасно
+    const q = ymaps.geoQuery({ type:'FeatureCollection', features:[obj] });
+    const b = q.getBounds();
+    if (b) map.setBounds(b, { checkZoomRange:true, zoomMargin:20 });
+  } catch(e){
+    console.warn('bounds error', e);
+  }
 }
 
 async function loadGeoJSON(){
@@ -70,16 +77,24 @@ async function loadGeoJSON(){
   if (!r.ok) throw new Error('HTTP '+r.status);
   const data = await r.json();
 
-  // Приводим к FeatureCollection и пронумеровываем id, чтобы клик по списку работал
+  // Гарантируем FeatureCollection и выдаём id по индексу
   const fc = (data?.type === 'FeatureCollection')
     ? data
     : { type:'FeatureCollection', features: (data?.type==='Feature' ? [data] : [{type:'Feature',geometry:data,properties:{}}]) };
 
+  // Оставим только полигоны/мультиполигоны на всякий случай
+  fc.features = (fc.features||[]).filter(f => f && f.geometry && (f.geometry.type === 'Polygon' || f.geometry.type === 'MultiPolygon'));
+
   fc.features = fc.features.map((f, i) => ({ id:i, ...f }));
 
-  // Добавляем в ObjectManager (он понимает и Polygon, и MultiPolygon)
-  om.add(fc);
-  features = fc.features;
+  // Добавляем в ObjectManager
+  try {
+    om.add(fc);
+  } catch(e) {
+    console.error('om.add failed', e);
+    diag('Ошибка GeoJSON: не удалось добавить объекты');
+    return;
+  }
 
   // Стиль на все объекты
   om.objects.options.set({
@@ -87,14 +102,16 @@ async function loadGeoJSON(){
     fillOpacity: 0.6,
     strokeColor: '#ff0055',
     strokeOpacity: 1,
-    strokeWidth: 2,
+    strokeWidth: 2
   });
 
-  // fit bounds всем
+  // Подгоняем карту по всем объектам — через om.getBounds(), без geoQuery
   try {
-    const b = ymaps.geoQuery(fc).getBounds();
+    const b = om.getBounds && om.getBounds();
     if (b) map.setBounds(b, { checkZoomRange:true, zoomMargin:20 });
-  } catch {}
+  } catch(e){
+    console.warn('setBounds failed', e);
+  }
 
   // Список
   buildList(fc);
@@ -103,20 +120,21 @@ async function loadGeoJSON(){
 }
 
 ymaps.ready(() => {
+  // ВАЖНО: coordorder=longlat → центр задаём как [долгота, широта]
   map = new ymaps.Map('map', {
-    center:[55.751244, 37.618423],
+    center:[37.618423, 55.751244], // Москва (lon,lat)
     zoom:9,
     controls:['zoomControl','typeSelector','fullscreenControl']
   }, { suppressMapOpenBlock:true });
 
-  // Слои Яндекса: схема/спутник/гибрид доступны из селектора слоёв
+  // Слои Яндекса: Схема/Спутник/Гибрид через стандартный селектор
   map.controls.get('typeSelector').options.set('size','large');
 
-  // ObjectManager без кластеризации — идеально для множества полигонов
+  // ObjectManager (без кластеризации)
   om = new ymaps.ObjectManager({ clusterize:false, geoObjectOpenBalloonOnClick:false });
   map.geoObjects.add(om);
 
-  loadGeoJSON().catch(e => { console.error(e); diag('Ошибка GeoJSON: '+(e.message||e)); });
+  loadGeoJSON().catch(e => { console.error(e); diag('Ошибка GeoJSON: ' + (e.message || e)); });
 });
 </script>
 </body>
