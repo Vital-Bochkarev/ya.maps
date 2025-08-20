@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Карта из GeoJSON — MultiPolygon</title>
+  <title>Карта из GeoJSON — MultiPolygon (финал)</title>
   <style>
     html,body { height:100%; margin:0; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
     #wrap { display:grid; grid-template-columns:360px 1fr; height:100%; }
@@ -15,10 +15,10 @@
     tbody td { padding:.5rem .75rem; border-bottom:1px solid #f3f4f6; vertical-align:top; }
     tbody tr { cursor:pointer; }
     tbody tr:hover { background:#f9fafb; }
-    #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.85; z-index:9999; }
+    #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.9; z-index:9999; }
   </style>
 
-  <!-- ВСТАВЬТЕ СВОЙ КЛЮЧ -->
+  <!-- ВСТАВЬТЕ СВОЙ API-КЛЮЧ -->
   <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat&apikey=743db4ac-b4fa-4b26-9e5d-a46953c1b951"></script>
 </head>
 <body>
@@ -39,30 +39,31 @@
 <script>
 const SRC_GEOJSON = "https://gist.githubusercontent.com/Vital-Bochkarev/b96a1680d32b83086de812eddabb31cf/raw/69ce2f478a9f8990b482fdd6348de02387593212/map.geojson";
 
-// заметные стили
+const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
+const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
+
+// Стили — максимально заметные и поверх всех слоёв
 const MP_STYLE = {
-  fillColor:   '#ff0055',
-  fillOpacity: 0.75,
-  strokeColor: '#ff0055',
+  fillColor:   '#00ff00',   // ярко-зелёный
+  fillOpacity: 0.9,
+  strokeColor: '#000000',   // чёрная обводка
   strokeOpacity: 1,
-  strokeWidth: 5,
-  zIndex: 65000,
-  zIndexHover: 65001,
+  strokeWidth: 6,
+  zIndex: 100000,
+  zIndexHover: 100001,
   hasHint: false,
   hasBalloon: false,
   interactivityModel: 'default#geoObject'
 };
 
-const esc = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
-const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
-
+// GeoJSON → FeatureCollection
 function toFC(obj){
   if (obj?.type === 'FeatureCollection') return obj;
   if (obj?.type === 'Feature') return { type:'FeatureCollection', features:[obj] };
   return { type:'FeatureCollection', features:[{ type:'Feature', geometry:obj, properties:{} }] };
 }
 
-// приводим координаты к числам [lon,lat] на всех уровнях
+// Нормализация координат в числа [lon,lat] (без смены порядка — coordorder=longlat)
 const num = v => { const n = Number(v); return Number.isFinite(n) ? n : NaN; };
 const normPair = p => [num(p[0]), num(p[1])];
 function normalizeGeom(g){
@@ -76,28 +77,72 @@ function normalizeGeom(g){
   return g;
 }
 
-// создаём ОДИН GeoObject с типом MultiPolygon — без разбиения
-function makeMultiPolygonObject(feature){
-  const g = feature.geometry;
-  // если в исходнике Polygon, оборачиваем его в MultiPolygon, чтобы всегда был мультиполигон
-  let geom;
-  if (g.type === 'MultiPolygon')      geom = { type:'MultiPolygon', coordinates: g.coordinates };
-  else if (g.type === 'Polygon')      geom = { type:'MultiPolygon', coordinates: [ g.coordinates ] };
-  else if (g.type === 'GeometryCollection'){
-    // собираем из коллекции только полигоны и мультиполигоны
-    const polys = [];
-    (g.geometries||[]).forEach(gg=>{
-      if (gg.type==='Polygon') polys.push(gg.coordinates);
-      else if (gg.type==='MultiPolygon') polys.push(...gg.coordinates);
-    });
-    geom = { type:'MultiPolygon', coordinates: polys };
-  } else {
-    return null; // не полигонная геометрия
+// «Починка» колец (закрываем, фильтруем мусор, убираем слишком короткие)
+function fixRing(r){
+  const out = [];
+  for (const p of r) {
+    if (!Array.isArray(p) || p.length < 2) continue;
+    const lon = Number(p[0]), lat = Number(p[1]);
+    if (!Number.isFinite(lon) || !Number.isFinite(lat)) continue;
+    out.push([lon,lat]);
   }
-  return new ymaps.GeoObject({ geometry: geom, properties: feature.properties || {} }, MP_STYLE);
+  if (out.length < 4) return null;
+  const a = out[0], b = out[out.length-1];
+  if (a[0] !== b[0] || a[1] !== b[1]) out.push([a[0], a[1]]); // замыкаем
+  return out;
+}
+function fixPolygon(poly){
+  const rings = [];
+  for (const r of poly) {
+    const rr = fixRing(r);
+    if (rr) rings.push(rr);
+  }
+  return rings.length ? rings : null;
+}
+function fixMultiPolygon(mpoly){
+  const polys = [];
+  for (const p of mpoly) {
+    const pp = fixPolygon(p);
+    if (pp) polys.push(pp);
+  }
+  return polys.length ? polys : null;
 }
 
-// таблица
+// Создаём ОДИН GeoObject с типом MultiPolygon (Polygon → оборачиваем)
+function makeMultiPolygonObject(feature){
+  const g = feature.geometry;
+  let coords = null;
+
+  if (g.type === 'MultiPolygon') {
+    coords = fixMultiPolygon(g.coordinates);
+  } else if (g.type === 'Polygon') {
+    const fixed = fixPolygon(g.coordinates);
+    coords = fixed ? [fixed] : null;
+  } else if (g.type === 'GeometryCollection') {
+    // соберём полигонные части
+    const polys = [];
+    (g.geometries||[]).forEach(gg => {
+      if (gg.type === 'Polygon') {
+        const fixed = fixPolygon(gg.coordinates);
+        if (fixed) polys.push(fixed);
+      } else if (gg.type === 'MultiPolygon') {
+        const fixed = fixMultiPolygon(gg.coordinates);
+        if (fixed) polys.push(...fixed);
+      }
+    });
+    coords = polys.length ? polys : null;
+  }
+
+  if (!coords || !coords.length) return null;
+
+  // ВАЖНО: структура MultiPolygon — массив полигонов, каждый полигон — массив колец, каждое кольцо — массив точек.
+  return new ymaps.GeoObject(
+    { geometry: { type:'MultiPolygon', coordinates: coords }, properties: feature.properties || {} },
+    MP_STYLE
+  );
+}
+
+// Таблица
 function buildList(fc, focus){
   const tbody = document.getElementById('featList');
   tbody.innerHTML = '';
@@ -127,29 +172,41 @@ function overallBounds(){
 }
 
 async function loadAndRender(){
-  const r = await fetch(SRC_GEOJSON, { cache:'no-store' });
-  if (!r.ok) throw new Error('HTTP ' + r.status);
-  const raw = await r.json();
+  const res = await fetch(SRC_GEOJSON, { cache:'no-store' });
+  if (!res.ok) throw new Error('HTTP ' + res.status);
+  const raw = await res.json();
   const fc  = toFC(raw);
 
-  // нормализация координат
+  // нормализуем координаты
   fc.features.forEach(f => f.geometry && normalizeGeom(f.geometry));
 
-  // удаляем старые
+  // очищаем карту
   objects.forEach(o => map.geoObjects.remove(o));
   objects.length = 0;
 
-  // добавляем ТОЛЬКО мультиполигоны (Polygon → оборачиваем)
+  // добавляем только мультиполигоны (Polygon → оборачиваем)
   fc.features.forEach(f => {
     try {
       const obj = makeMultiPolygonObject(f);
-      if (!obj) return; // пропускаем точки/линии
+      if (!obj) return; // пропускаем не-полигонные геометрии
       map.geoObjects.add(obj);
       objects.push(obj);
     } catch(e) {
       console.warn('skip feature', f.properties, e);
     }
   });
+
+  // Тестовый мультиполигон поверх всего — для контроля видимости
+  const testMulti = new ymaps.GeoObject({
+    geometry: {
+      type: 'MultiPolygon',
+      coordinates: [
+        [[[37.58,55.78],[37.72,55.78],[37.72,55.70],[37.58,55.70],[37.58,55.78]]],
+        [[[37.62,55.745],[37.65,55.745],[37.65,55.735],[37.62,55.735],[37.62,55.745]]]
+      ]
+    }
+  }, { ...MP_STYLE, fillColor:'#00ff00', strokeColor:'#000000', zIndex: 200000 });
+  map.geoObjects.add(testMulti);
 
   // список и зум по клику
   buildList(fc, (idx) => {
@@ -172,6 +229,10 @@ ymaps.ready(() => {
     zoom:7,
     controls:['zoomControl','typeSelector','fullscreenControl']
   });
+
+  // Контрастная подложка — чтобы заливка была точно заметна
+  map.setType('yandex#satellite'); // можно заменить на 'yandex#hybrid'
+
   loadAndRender().catch(e => { console.error(e); diag('Ошибка: ' + e.message); });
 });
 </script>
