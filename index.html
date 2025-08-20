@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Яндекс.Карты — GeoJSON (устойчивый рендер)</title>
+  <title>Яндекс.Карты — GeoJSON (правильный порядок координат)</title>
   <style>
     html,body { height:100%; margin:0; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
     #wrap { display:grid; grid-template-columns:360px 1fr; height:100%; }
@@ -17,8 +17,8 @@
     tbody tr:hover { background:#f9fafb; }
     #diag { position:fixed; right:8px; bottom:8px; background:#111; color:#fff; padding:4px 8px; border-radius:6px; font:12px/1.3 monospace; opacity:.9; z-index:9999; }
   </style>
-  <!-- coordorder=longlat → все координаты [долгота, широта] -->
-  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&coordorder=longlat&apikey=ВАШ_API_КЛЮЧ"></script>
+  <!-- КЛЮЧ можно вписать вместо YOUR_API_KEY, либо убрать apikey=... совсем -->
+  <script src="https://api-maps.yandex.ru/2.1/?lang=ru_RU&apikey=743db4ac-b4fa-4b26-9e5d-a46953c1b951"></script>
 </head>
 <body>
   <div id="wrap">
@@ -43,62 +43,65 @@ const esc  = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'
 const diag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
 
 let map;
-const objs = []; // ymaps.GeoObject по индексу (для клика из списка)
+const objs = []; // ymaps.GeoObject по индексу
 
-// ---------- приведение Polygon/MultiPolygon к валидному MultiPolygon ----------
+// ---------- helpers: sanitize + FLIP [lon,lat] -> [lat,lon] ----------
 const isNum = v => Number.isFinite(Number(v));
-function fixRing(r){
+function flipPointLLtoYL(pt){ // [lon,lat] -> [lat,lon]
+  return [ Number(pt[1]), Number(pt[0]) ];
+}
+function fixRingGeoJSONtoYandex(r){
   if (!Array.isArray(r)) return null;
   const out = [];
   for (const p of r){
     if (!Array.isArray(p) || p.length < 2) continue;
     const lon = Number(p[0]), lat = Number(p[1]);
     if (!isNum(lon) || !isNum(lat)) continue;
-    out.push([lon, lat]);
+    out.push(flipPointLLtoYL(p));
   }
   if (out.length < 4) return null;
   const a = out[0], b = out[out.length-1];
-  if (a[0] !== b[0] || a[1] !== b[1]) out.push([a[0], a[1]]);
+  if (a[0] !== b[0] || a[1] !== b[1]) out.push([a[0], a[1]]); // замыкание
   return out;
 }
-function fixPolygon(poly){
+function fixPolygonGeoJSONtoYandex(poly){
   if (!Array.isArray(poly)) return null;
   const rings = [];
-  for (const ring of poly){
-    const rr = fixRing(ring);
+  for (const r of poly){
+    const rr = fixRingGeoJSONtoYandex(r);
     if (rr) rings.push(rr);
   }
   return rings.length ? rings : null;
 }
-function toMultiPolygon(coords, type){
+function toYandexMultiPolygon(coords, type){
   if (!Array.isArray(coords)) return null;
   if (type === 'Polygon'){
-    const fixed = fixPolygon(coords);
-    return fixed ? [fixed] : null;
-  } else {
+    const fixed = fixPolygonGeoJSONtoYandex(coords);
+    return fixed ? [fixed] : null; // -> MultiPolygon
+  } else if (type === 'MultiPolygon'){
     const polys = [];
     for (const p of coords){
-      const fixed = fixPolygon(p);
+      const fixed = fixPolygonGeoJSONtoYandex(p);
       if (fixed) polys.push(fixed);
     }
     return polys.length ? polys : null;
   }
+  return null;
 }
-
-function sanitizeFeature(f){
+function sanitizeFeatureToYandex(f){
   if (!f || !f.geometry) return null;
   const g = f.geometry;
   if (g.type !== 'Polygon' && g.type !== 'MultiPolygon') return null;
-  const mp = toMultiPolygon(g.coordinates, g.type);
+  const mp = toYandexMultiPolygon(g.coordinates, g.type);
   if (!mp) return null;
   return {
     type:'Feature',
     properties: f.properties || {},
-    geometry: { type:'MultiPolygon', coordinates: mp }
+    geometry: { type:'MultiPolygon', coordinates: mp } // ВНИМАНИЕ: точки уже [lat,lon]
   };
 }
 
-// ---------- список ----------
+// ---------- UI ----------
 function buildList(features){
   const tbody = document.getElementById('featList');
   tbody.innerHTML = '';
@@ -118,7 +121,7 @@ function buildList(features){
   });
 }
 
-// ---------- загрузка и рендер (по одному, через try/catch) ----------
+// ---------- load & draw (per-object with try/catch) ----------
 async function loadAndDraw(){
   diag('Загрузка GeoJSON…');
   const r = await fetch(SRC_GEOJSON, { cache:'no-store' });
@@ -133,7 +136,7 @@ async function loadAndDraw(){
   let dropped = 0;
 
   (fcIn.features || []).forEach(f => {
-    const sf = sanitizeFeature(f);
+    const sf = sanitizeFeatureToYandex(f);
     if (sf) cleaned.push(sf); else dropped++;
   });
 
@@ -155,7 +158,6 @@ async function loadAndDraw(){
       map.geoObjects.add(o);
       objs[i] = o;
       ok++;
-
       const b = o.geometry.getBounds?.();
       if (b){
         if (!anyBounds) anyBounds = b;
@@ -179,12 +181,14 @@ async function loadAndDraw(){
 }
 
 ymaps.ready(() => {
+  // Яндекс по умолчанию использует [lat, lon] — центр задаём именно так
   map = new ymaps.Map('map', {
-    center:[37.618423, 55.751244], // Москва (lon,lat)
+    center:[55.751244, 37.618423], // Москва [lat, lon]
     zoom:9,
     controls:['zoomControl','typeSelector','fullscreenControl']
   }, { suppressMapOpenBlock:true });
 
+  // Слои: Схема / Спутник / Гибрид
   map.controls.get('typeSelector').options.set('size','large');
 
   loadAndDraw().catch(e => { console.error(e); diag('Ошибка GeoJSON: ' + (e.message || e)); });
