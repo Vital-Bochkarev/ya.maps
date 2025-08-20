@@ -42,64 +42,76 @@
     const esc = s => String(s ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[ch]));
     const setDiag = t => { const el = document.getElementById('diag'); if (el) el.textContent = t; };
 
-    // Карта без атрибуции (флажок пропадёт)
-    const map = L.map('map', { center: [55.75, 37.61], zoom: 8, attributionControl:false });
+    // Карта без атрибуции (флажка не будет)
+    const map = L.map('map', { center: [55.75, 37.61], zoom: 9, attributionControl:false });
+
+    // Тайлы Яндекса (схема). Можно заменить `l=skl` для гибрида или `l=sat` для спутника
     L.tileLayer(
       'https://core-renderer-tiles.maps.yandex.net/tiles?l=map&x={x}&y={y}&z={z}&scale=1&lang=ru_RU',
-      { maxZoom:19 }
+      { maxZoom: 19 }
     ).addTo(map);
 
-    // Переворот координат [lng,lat] → [lat,lng]
-    function flipCoords(coords) {
-      if (typeof coords[0] === "number") {
-        return [coords[1], coords[0]];
-      }
-      return coords.map(flipCoords);
-    }
-    function fixGeoJSON(fc) {
-      const out = JSON.parse(JSON.stringify(fc));
-      out.features.forEach(f=>{
-        if (f.geometry?.coordinates) {
-          f.geometry.coordinates = flipCoords(f.geometry.coordinates);
-        }
-      });
-      return out;
-    }
+    // Стиль полигонов
+    const polyStyle = {
+      color: '#ff0055',
+      weight: 2,
+      opacity: 1,
+      fillColor: '#ff6699',
+      fillOpacity: 0.6
+    };
 
-    const polyStyle = { color:'#ff0055', weight:2, fillColor:'#ff6699', fillOpacity:0.6 };
-    const featureLayers=[];
+    const featureLayers = [];
 
     function buildList(fc, focus) {
       const tbody = document.getElementById('featList');
       tbody.innerHTML = '';
-      fc.features.forEach((f,i)=>{
-        const p=f.properties||{};
-        const okrug = p.Name??p.name??'—';
-        const name = p.description??'—';
-        const tr=document.createElement('tr');
-        tr.innerHTML=`<td>${esc(okrug)}</td><td>${esc(name)}</td>`;
-        tr.onclick=()=>focus(i);
+      if (!fc.features?.length) {
+        tbody.innerHTML = '<tr><td colspan="2">Нет данных</td></tr>';
+        return;
+      }
+      fc.features.forEach((f, i) => {
+        const p = f.properties || {};
+        const okrug = p.Name ?? p.NAME ?? p.name ?? p.title ?? '—';
+        const name  = p.description ?? '—';
+        const tr = document.createElement('tr');
+        tr.innerHTML = `<td>${esc(okrug)}</td><td>${esc(name)}</td>`;
+        tr.onclick = () => focus(i);
         tbody.appendChild(tr);
       });
     }
 
-    fetch(SRC_GEOJSON).then(r=>r.json()).then(fc=>{
-      const fixed = fixGeoJSON(fc);
-      const layer = L.geoJSON(fixed,{
-        style:polyStyle,
-        onEachFeature:(feature,layer)=>{
-          featureLayers.push(layer);
-          const p=feature.properties||{};
-          layer.bindPopup(`<b>${esc(p.description||"")}</b><br>${esc(p.Name||"")}`);
-        }
-      }).addTo(map);
-      map.fitBounds(layer.getBounds());
-      buildList(fixed,(i)=>{
-        const l=featureLayers[i];
-        if(l){ map.fitBounds(l.getBounds(),{padding:[20,20]}); l.openPopup(); }
+    fetch(SRC_GEOJSON, { cache:'no-store' })
+      .then(r => r.json())
+      .then(fc => {
+        // ВАЖНО: никаких перестановок — Leaflet читает GeoJSON в [lon,lat]
+        const layer = L.geoJSON(fc, {
+          style: polyStyle,
+          onEachFeature: (feature, layer) => {
+            featureLayers.push(layer);
+            const p = feature.properties || {};
+            const okrug = p.Name ?? p.NAME ?? p.name ?? p.title ?? '';
+            const name  = p.description ?? '';
+            if (okrug || name) layer.bindPopup(`<b>${esc(name)}</b><br>${esc(okrug)}`);
+          }
+        }).addTo(map);
+
+        try { map.fitBounds(layer.getBounds()); } catch {}
+
+        buildList(fc, (i) => {
+          const l = featureLayers[i];
+          if (l) {
+            const b = l.getBounds?.();
+            if (b && b.isValid()) map.fitBounds(b, { padding:[20,20] });
+            l.openPopup();
+          }
+        });
+
+        setDiag(`OK: объектов на карте: ${featureLayers.length}`);
+      })
+      .catch(e => {
+        console.error(e);
+        setDiag('Ошибка загрузки GeoJSON');
       });
-      setDiag(`OK: ${featureLayers.length} объектов`);
-    }).catch(e=>{console.error(e); setDiag("Ошибка GeoJSON");});
   </script>
 </body>
 </html>
